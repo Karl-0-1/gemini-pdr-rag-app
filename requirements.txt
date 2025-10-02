@@ -5,6 +5,7 @@ streamlit
 # LangChain Framework (Core components for RAG and PDR)
 langchain
 langchain-core
+langchain-community
 
 # Google Integration (Gemini LLM and Embeddings)
 langchain-google-genai
