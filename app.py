@@ -101,7 +101,7 @@ CUSTOM_PROMPT = PromptTemplate(
 
 def setup_conversational_chain(retriever):
     # Define LLM and Memory
-    llm_with_history = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.2)
+    llm_with_history = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.4)
     
     # Memory setup
     memory = ConversationBufferMemory(
@@ -117,7 +117,7 @@ def setup_conversational_chain(retriever):
         memory=memory,
         chain_type="stuff",
         # <-- CRITICAL FIX: Inject the custom prompt for quality control -->
-        combine_docs_chain_kwargs={"prompt": CUSTOM_PROMPT} 
+        # combine_docs_chain_kwargs={"prompt": CUSTOM_PROMPT} 
     )
     st.info("Conversational Retrieval Chain setup complete with custom prompt.")
     return qa_chain
