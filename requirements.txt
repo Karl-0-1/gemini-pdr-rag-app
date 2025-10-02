@@ -1,0 +1,16 @@
+# requirements.txt
+# Core Streamlit application framework
+streamlit
+
+# LangChain Framework (Core components for RAG and PDR)
+langchain
+langchain-core
+
+# Google Integration (Gemini LLM and Embeddings)
+langchain-google-genai
+
+# Document Loaders (for reading PDF files)
+pypdf
+
+# Vector Store (for embedding storage and retrieval)
+chromadb
