@@ -74,9 +74,10 @@ def setup_retriever(file_path: str):
     st.success(f"PDR indexing complete. {len(data)} pages processed.")
     return retriever
 
-
-@st.cache_resource
-def setup_conversational_chain(retriever):
+def setup_conversational_chain(retriever): 
+    # Define LLM and Memory
+    llm_with_history = st.session_state.llm # Use session state for LLM if you need to cache the LLM itself
+    
     # Define LLM and Memory
     llm_with_history = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.2)
     
@@ -90,7 +91,7 @@ def setup_conversational_chain(retriever):
     # Create the final QA chain
     qa_chain = ConversationalRetrievalChain.from_llm(
         llm=llm_with_history,
-        retriever=retriever, 
+        retriever=retriever, # The retriever is passed, but the chain itself is NOT cached.
         memory=memory,
         chain_type="stuff",
     )
