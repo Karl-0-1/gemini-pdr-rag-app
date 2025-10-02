@@ -2,10 +2,9 @@ import streamlit as st
 import os
 import sys
 import tempfile
-import time # Optional: For simulating a loading time or delay
+import time
 
 # --- LangChain and Google Imports ---
-# NOTE: Removed getpass and userdata imports as they are replaced by st.secrets
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -14,20 +13,19 @@ from langchain.storage import InMemoryStore
 from langchain_community.vectorstores import Chroma
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
-# Removed unused imports: ChatPromptTemplate, RunnablePassthrough, StrOutputParser
+from langchain_core.prompts import PromptTemplate # <-- Essential for custom prompt
 
 # ========================================================================
 # 1. CONFIGURATION AND API KEY SETUP
 # ========================================================================
 
-# The PDF file name is now handled via Streamlit's file uploader (not fixed path)
 LLM_MODEL = "gemini-2.5-flash"
 EMBEDDING_MODEL = "models/embedding-001"
 
 st.set_page_config(page_title="Gemini Advanced RAG Chatbot", layout="wide")
 st.title("🤖 Advanced Chat with Your PDF (Gemini PDR)")
 
-# Streamlit requires the API key to be accessed via st.secrets during deployment.
+# API Key Setup via Streamlit Secrets
 try:
     if "GEMINI_API_KEY" in st.secrets:
         os.environ['GOOGLE_API_KEY'] = st.secrets["GEMINI_API_KEY"]
@@ -36,14 +34,14 @@ try:
         st.info("Please set this variable in your app's secrets.")
         st.stop()
 except Exception:
-    st.error("🚨 Configuration Error: Could not set Gemini API key.")
+    st.error("🚨 Configuration Error: Could not access Streamlit Secrets.")
     st.stop()
 
+
 # ========================================================================
-# 2. RAG CORE LOGIC: PDR AND RETRIEVER (Cached Functions)
+# 2. RAG CORE LOGIC: PDR AND RETRIEVER (Cached Function)
 # ========================================================================
 
-# Use st.cache_resource to ensure the expensive indexing step runs only once.
 @st.cache_resource
 def setup_retriever(file_path: str):
     # 1. Load Documents
@@ -54,10 +52,8 @@ def setup_retriever(file_path: str):
     parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
     child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=100)
 
-    # 3. Setup Storage
+    # 3. Setup Storage and Embeddings
     embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
-    
-    # We use a non-persistent vectorstore for the uploaded file in Streamlit
     vectorstore = Chroma.from_documents(data, embeddings)
     store = InMemoryStore()
 
@@ -68,21 +64,44 @@ def setup_retriever(file_path: str):
         child_splitter=child_splitter,
         parent_splitter=parent_splitter,
     )
-    # This triggers the splitting and storage
     retriever.add_documents(data, ids=None)
     
     st.success(f"PDR indexing complete. {len(data)} pages processed.")
     return retriever
 
 # ========================================================================
-# 3. CONVERSATIONAL CHAIN WITH MEMORY (FIXED)
+# 3. CONVERSATIONAL CHAIN WITH MEMORY AND CUSTOM PROMPT (QUALITY FIX)
 # ========================================================================
+
+# 1. Define the custom prompt template
+CUSTOM_QA_TEMPLATE = """You are a highly analytical and concise research assistant. 
+Your primary goal is to answer the user's question based ONLY on the provided context, 
+which includes the conversation history and the retrieved document chunks.
+
+Follow these rules STRICTLY:
+1. **Conciseness:** Provide the answer directly and in a professional, factual tone. Avoid filler like "Based on the documents..."
+2. **Refusal:** If the document does not contain the answer, state clearly: 'I could not find that specific detail in the document.'
+
+Chat History:
+{chat_history}
+
+Context:
+{context}
+
+Question:
+{question}
+
+Concise Answer:"""
+
+CUSTOM_PROMPT = PromptTemplate(
+    template=CUSTOM_QA_TEMPLATE,
+    input_variables=["context", "question", "chat_history"]
+)
+
 
 def setup_conversational_chain(retriever):
     # Define LLM and Memory
-    # FIX: We now create the LLM object directly. 
-    # The problematic line that referenced st.session_state is removed.
-    llm_with_history = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.2) 
+    llm_with_history = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.2)
     
     # Memory setup
     memory = ConversationBufferMemory(
@@ -97,13 +116,20 @@ def setup_conversational_chain(retriever):
         retriever=retriever, 
         memory=memory,
         chain_type="stuff",
+        # <-- CRITICAL FIX: Inject the custom prompt for quality control -->
+        combine_docs_chain_kwargs={"prompt": CUSTOM_PROMPT} 
     )
-    # The function is much cleaner now!
+    st.info("Conversational Retrieval Chain setup complete with custom prompt.")
     return qa_chain
 
 # ========================================================================
-# 3. STREAMLIT UI AND CHAT LOOP (MAIN EXECUTION)
+# 4. STREAMLIT UI AND CHAT LOOP (MAIN EXECUTION)
 # ========================================================================
+
+# Streamlit App Execution Flow
+
+if "qa_chain" not in st.session_state:
+    st.session_state.qa_chain = None
 
 # File Uploader
 uploaded_file = st.file_uploader("Upload a PDF document to start chatting:", type="pdf")
@@ -113,19 +139,18 @@ if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(uploaded_file.getvalue())
         tmp_file_path = tmp_file.name
-    
-    # Setup the RAG components only when a file is uploaded
-    with st.spinner("Indexing document with Parent Document Retriever..."):
-        # Time the indexing for user feedback (optional)
-        start_time = time.time()
-        pdr_retriever = setup_retriever(tmp_file_path)
-        qa_chain = setup_conversational_chain(pdr_retriever)
-        end_time = time.time()
-        st.success(f"Indexing complete in {end_time - start_time:.2f} seconds! Ask a multi-turn question below.")
 
-    # Initialize chat history
+    # Check if the chain is already initialized (to prevent re-indexing on every chat turn)
+    if st.session_state.qa_chain is None:
+        with st.spinner("Indexing document with Parent Document Retriever..."):
+            start_time = time.time()
+            pdr_retriever = setup_retriever(tmp_file_path)
+            st.session_state.qa_chain = setup_conversational_chain(pdr_retriever)
+            end_time = time.time()
+            st.success(f"Indexing complete in {end_time - start_time:.2f} seconds! Ask a multi-turn question below.")
+
+    # Initialize chat history for the session
     if "messages" not in st.session_state:
-        # Initial greeting
         st.session_state.messages = [{"role": "assistant", "content": "Hello! Ask me anything about your uploaded PDF."}]
     
     # Display chat messages from history
@@ -135,6 +160,7 @@ if uploaded_file is not None:
 
     # Handle user input
     if prompt := st.chat_input("Ask a question about the document..."):
+        # Append user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         with st.chat_message("user"):
@@ -143,9 +169,12 @@ if uploaded_file is not None:
         with st.chat_message("assistant"):
             with st.spinner("Gemini is thinking and retrieving context..."):
                 # Invoke the Conversational Retrieval Chain
-                # The chain automatically uses memory and PDR retriever
-                result = qa_chain.invoke({"question": prompt})
+                # Use the chain from session state
+                result = st.session_state.qa_chain.invoke({"question": prompt})
                 response = result['answer']
                 st.markdown(response)
         
         st.session_state.messages.append({"role": "assistant", "content": response})
+
+else:
+    st.info("Please upload a PDF document to begin the RAG process and enable the chat.")
