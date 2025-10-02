@@ -74,12 +74,15 @@ def setup_retriever(file_path: str):
     st.success(f"PDR indexing complete. {len(data)} pages processed.")
     return retriever
 
-def setup_conversational_chain(retriever): 
+# ========================================================================
+# 3. CONVERSATIONAL CHAIN WITH MEMORY (FIXED)
+# ========================================================================
+
+def setup_conversational_chain(retriever):
     # Define LLM and Memory
-    llm_with_history = st.session_state.llm # Use session state for LLM if you need to cache the LLM itself
-    
-    # Define LLM and Memory
-    llm_with_history = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.2)
+    # FIX: We now create the LLM object directly. 
+    # The problematic line that referenced st.session_state is removed.
+    llm_with_history = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.2) 
     
     # Memory setup
     memory = ConversationBufferMemory(
@@ -91,10 +94,11 @@ def setup_conversational_chain(retriever):
     # Create the final QA chain
     qa_chain = ConversationalRetrievalChain.from_llm(
         llm=llm_with_history,
-        retriever=retriever, # The retriever is passed, but the chain itself is NOT cached.
+        retriever=retriever, 
         memory=memory,
         chain_type="stuff",
     )
+    # The function is much cleaner now!
     return qa_chain
 
 # ========================================================================
